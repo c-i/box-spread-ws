@@ -66,7 +66,7 @@ func aevoOrderbookJson(instruments []string) []byte {
 		orderbooks = append(orderbooks, "orderbook:"+instrument)
 	}
 
-	data := wssData{
+	data := WssData{
 		Op:   "subscribe",
 		Data: orderbooks,
 	}
@@ -106,7 +106,7 @@ func aevoUpdateOrderbook(expiry int64, strike float64, optionType string, bids [
 	_, exists := Orderbooks[expiry][strike]
 
 	if exists {
-		if optionType == "C" {
+		if optionType == "C" { //appends forever, fix this ASAP
 			Orderbooks[expiry][strike].CallBids = append(Orderbooks[expiry][strike].CallBids, bids...)
 			Orderbooks[expiry][strike].CallAsks = append(Orderbooks[expiry][strike].CallAsks, asks...)
 		}
@@ -115,18 +115,22 @@ func aevoUpdateOrderbook(expiry int64, strike float64, optionType string, bids [
 			Orderbooks[expiry][strike].PutAsks = append(Orderbooks[expiry][strike].PutAsks, asks...)
 		}
 	} else {
+		if Orderbooks[expiry] == nil {
+			Orderbooks[expiry] = make(map[float64]*Orders)
+		}
+
 		if optionType == "C" {
-			Orderbooks[expiry][strike].CallBids = bids
-			Orderbooks[expiry][strike].CallAsks = asks
+			Orderbooks[expiry][strike] = &Orders{CallBids: bids, CallAsks: asks}
 		}
 		if optionType == "P" {
-			Orderbooks[expiry][strike].PutBids = bids
-			Orderbooks[expiry][strike].PutAsks = asks
+			Orderbooks[expiry][strike] = &Orders{PutBids: bids, PutAsks: asks}
 		}
 	}
 }
 
 func aevoUpdateOrderbooks(res map[string]interface{}) error {
+	//takes unmarshaled ws response and updates Orderbooks
+
 	data, ok := res["data"].(map[string]interface{})
 	if !ok {
 		return fmt.Errorf("aevoUpdateOrderbooks: unable to cast response to type map[string]interface{}: response: %+v", res)
@@ -171,6 +175,8 @@ func aevoUpdateOrderbooks(res map[string]interface{}) error {
 }
 
 func aevoWssRead(ctx context.Context, c *websocket.Conn) { //add exit condition, add ping or use Reader instead of Read to automatically manage ping, disconnect, etc
+	//reads for ws response and updates Orderbooks
+
 	var res map[string]interface{}
 	raw, err := wssRead(ctx, c)
 	if err != nil {
@@ -192,6 +198,7 @@ func aevoWssRead(ctx context.Context, c *websocket.Conn) { //add exit condition,
 
 	if strings.Contains(channel, "orderbook") {
 		aevoUpdateOrderbooks(res)
+		fmt.Printf("%+v\n\n", res)
 	}
 }
 

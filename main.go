@@ -2,9 +2,10 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"strconv"
+
+	"nhooyr.io/websocket"
 )
 
 type Order struct {
@@ -21,9 +22,18 @@ type Orders struct {
 	PutAsks  []Order
 }
 
+type Exchanges struct {
+	Aevo bool
+	Lyra bool
+}
+
 var Orderbooks = make(map[int64]map[float64]*Orders)
+var Boxes = make(map[int64]*Box)
 
 func unpackOrders(orders []interface{}, exchange string) ([]Order, error) {
+	//takes unmarshaled json arrays of bids/asks and returns []Order
+	//expects orders []interface{} to unpack into 2d array of [[price, amount, IV]...]
+
 	unpackedOrders := make([]Order, 0)
 	for _, order := range orders {
 		orderArr, ok := order.([]interface{})
@@ -69,8 +79,27 @@ func unpackOrders(orders []interface{}, exchange string) ([]Order, error) {
 	return unpackedOrders, nil
 }
 
+func mainEventLoop(exchanges Exchanges, connections map[string]ConnData) {
+	for {
+		if exchanges.Aevo {
+			aevoWssRead(connections["aevo"].Ctx, connections["aevo"].Conn)
+		}
+	}
+}
+
 func main() {
-	markets := aevoMarkets("ETH")
-	instruments := aevoInstruments(markets)
-	fmt.Printf("Aevo number of instruments: %v\n\n", len(instruments))
+	exchanges := Exchanges{Aevo: true, Lyra: false}
+	connections := connInit(exchanges)
+	if exchanges.Aevo {
+		defer connections["aevo"].Cancel()
+		defer connections["aevo"].Conn.Close(websocket.StatusNormalClosure, "")
+		defer connections["aevo"].Conn.CloseNow()
+	}
+	if exchanges.Lyra {
+		defer connections["lyra"].Cancel()
+		defer connections["lyra"].Conn.Close(websocket.StatusNormalClosure, "")
+		defer connections["lyra"].Conn.CloseNow()
+	}
+
+	mainEventLoop(exchanges, connections)
 }

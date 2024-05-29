@@ -8,13 +8,13 @@ import (
 	"nhooyr.io/websocket"
 )
 
-type connData struct {
+type ConnData struct {
 	Ctx    context.Context
 	Conn   *websocket.Conn
 	Cancel context.CancelFunc
 }
 
-type wssData struct {
+type WssData struct {
 	Op   string   `json:"op"`
 	Data []string `json:"data"`
 }
@@ -37,21 +37,23 @@ func wssRead(ctx context.Context, c *websocket.Conn) ([]byte, error) {
 	return raw, err
 }
 
-func connInit() {
-	aevoCtx, aevoConn, aevoCancel := dialWss(AevoWss)
-	lyraCtx, lyraConn, lyraCancel := dialWss(LyraWss)
-	connections := map[string]connData{
-		"aevo": {aevoCtx, aevoConn, aevoCancel},
-		"lyra": {lyraCtx, lyraConn, lyraCancel},
+func connInit(exchanges Exchanges) map[string]ConnData {
+	//initialises ws connections and starts reqLoops for selected exchanges
+
+	connections := make(map[string]ConnData)
+	if exchanges.Aevo {
+		aevoCtx, aevoConn, aevoCancel := dialWss(AevoWss)
+		connections["aevo"] = ConnData{aevoCtx, aevoConn, aevoCancel}
+
+		go aevoWssReqLoop(aevoCtx, aevoConn)
 	}
-	defer aevoCancel()
-	defer aevoConn.Close(websocket.StatusNormalClosure, "")
-	defer aevoConn.CloseNow()
-	defer lyraCancel()
-	defer lyraConn.Close(websocket.StatusNormalClosure, "")
-	defer lyraConn.CloseNow()
 
-	go aevoWssReqLoop(aevoCtx, aevoConn)
-	lyraWssReqLoop(lyraCtx, lyraConn)
+	if exchanges.Lyra {
+		lyraCtx, lyraConn, lyraCancel := dialWss(LyraWss)
+		connections["lyra"] = ConnData{lyraCtx, lyraConn, lyraCancel}
 
+		go lyraWssReqLoop(lyraCtx, lyraConn)
+	}
+
+	return connections
 }
