@@ -8,18 +8,24 @@ import (
 	"nhooyr.io/websocket"
 )
 
+//seperate slices for each exchange? [][]Order
+
+// orderbook data received from exchange comes in a 2d array structured: [[price, amount, IV (if applicable)]...], Order is one innermost item (array) of this array
 type Order struct {
-	Price    float64
-	Amount   float64
-	Iv       float64
-	Exchange string
+	Price      float64
+	Amount     float64
+	Iv         float64
+	Strike     float64
+	OptionType string
+	Exchange   string
 }
 
 type Orders struct {
-	CallBids []Order
-	CallAsks []Order
-	PutBids  []Order
-	PutAsks  []Order
+	CallBids map[string][]Order
+	CallAsks map[string][]Order
+	PutBids  map[string][]Order
+	PutAsks  map[string][]Order
+	Strike   float64
 }
 
 type Exchanges struct {
@@ -27,10 +33,11 @@ type Exchanges struct {
 	Lyra bool
 }
 
-var Orderbooks = make(map[int64]map[float64]*Orders)
+// expiry: strike: exchange: orderbook
+var Orderbooks = make(map[int64][]*Orders) //Orders sorted by strike
 var Boxes = make(map[int64]*Box)
 
-func unpackOrders(orders []interface{}, exchange string) ([]Order, error) {
+func unpackOrders(orders []interface{}, strike float64, optionType string, exchange string) ([]Order, error) {
 	//takes unmarshaled json arrays of bids/asks and returns []Order
 	//expects orders []interface{} to unpack into 2d array of [[price, amount, IV]...]
 
@@ -73,7 +80,7 @@ func unpackOrders(orders []interface{}, exchange string) ([]Order, error) {
 			return unpackedOrders, errors.New("error converting string to float64")
 		}
 
-		unpackedOrders = append(unpackedOrders, Order{price, amount, iv, exchange})
+		unpackedOrders = append(unpackedOrders, Order{price, amount, iv, strike, optionType, exchange})
 	}
 
 	return unpackedOrders, nil

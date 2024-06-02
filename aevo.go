@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -102,29 +103,92 @@ func aevoWssReqOrderbook(instruments []string, ctx context.Context, c *websocket
 	}
 }
 
-func aevoUpdateOrderbook(expiry int64, strike float64, optionType string, bids []Order, asks []Order) {
-	_, exists := Orderbooks[expiry][strike]
+func aevoUpdateExistingOrderbook(order *Orders, bids []Order, asks []Order) {
+	exchange := bids[0].Exchange //if multiple exchanges are used and bids is empty must add check and use asks instead
+	optionType := bids[0].OptionType
+	_, exists := order.CallBids[exchange]
+	if !exists {
+		order.CallBids = make(map[string][]Order)
+		order.CallAsks = make(map[string][]Order)
+		order.PutBids = make(map[string][]Order)
+		order.PutAsks = make(map[string][]Order)
+	}
 
-	if exists {
-		if optionType == "C" { //appends forever, fix this ASAP
-			Orderbooks[expiry][strike].CallBids = append(Orderbooks[expiry][strike].CallBids, bids...)
-			Orderbooks[expiry][strike].CallAsks = append(Orderbooks[expiry][strike].CallAsks, asks...)
-		}
-		if optionType == "P" {
-			Orderbooks[expiry][strike].PutBids = append(Orderbooks[expiry][strike].PutBids, bids...)
-			Orderbooks[expiry][strike].PutAsks = append(Orderbooks[expiry][strike].PutAsks, asks...)
-		}
-	} else {
-		if Orderbooks[expiry] == nil {
-			Orderbooks[expiry] = make(map[float64]*Orders)
-		}
+	if optionType == "C" {
 
+		order.CallBids[exchange] = bids
+		order.CallAsks[exchange] = asks
+
+		//should only need to sort when modified
+		// bids should be sorted descending, asks ascending
+		// sorting should be unnecessary if exchange sends data correctly, but I'll sort for now anyway
+		sort.Slice(order.CallBids[exchange], func(i, j int) bool {
+			return order.CallBids[exchange][i].Price > order.CallBids[exchange][j].Price
+		})
+		sort.Slice(order.CallAsks[exchange], func(i, j int) bool {
+			return order.CallAsks[exchange][i].Price < order.CallAsks[exchange][j].Price
+		})
+	}
+	if optionType == "P" {
+		order.PutBids[exchange] = bids
+		order.PutAsks[exchange] = asks
+
+		sort.Slice(order.PutBids[exchange], func(i, j int) bool {
+			return order.PutBids[exchange][i].Price > order.PutBids[exchange][j].Price
+		})
+		sort.Slice(order.PutAsks[exchange], func(i, j int) bool {
+			return order.PutAsks[exchange][i].Price < order.PutAsks[exchange][j].Price
+		})
+	}
+}
+
+func aevoUpdateOrderbook(expiry int64, bids []Order, asks []Order) {
+	_, exists := Orderbooks[expiry]
+	// remember to sort by strike
+	if !exists { //might be unnecessary
+		Orderbooks[expiry] = make([]*Orders, 0)
+	}
+
+	strike := bids[0].Strike
+
+	strikeExists := false
+
+	for _, order := range Orderbooks[expiry] {
+		if order.Strike == strike {
+
+			aevoUpdateExistingOrderbook(order, bids, asks)
+
+			// fmt.Printf("%+v\n\n", order)
+
+			strikeExists = true
+			break
+		}
+	}
+
+	if !strikeExists {
+		exchange := bids[0].Exchange
+		optionType := bids[0].OptionType
+		strikeOrder := Orders{Strike: strike}
 		if optionType == "C" {
-			Orderbooks[expiry][strike] = &Orders{CallBids: bids, CallAsks: asks}
+			strikeOrder.CallBids = make(map[string][]Order)
+			strikeOrder.CallAsks = make(map[string][]Order)
+
+			strikeOrder.CallBids[exchange] = bids
+			strikeOrder.CallAsks[exchange] = asks
 		}
 		if optionType == "P" {
-			Orderbooks[expiry][strike] = &Orders{PutBids: bids, PutAsks: asks}
+			strikeOrder.PutBids = make(map[string][]Order)
+			strikeOrder.PutAsks = make(map[string][]Order)
+
+			strikeOrder.PutBids[exchange] = bids
+			strikeOrder.PutAsks[exchange] = asks
 		}
+
+		Orderbooks[expiry] = append(Orderbooks[expiry], &strikeOrder)
+		// should only need to sort []Orders by Strike when new item is added
+		sort.Slice(Orderbooks[expiry], func(i, j int) bool {
+			return Orderbooks[expiry][i].Strike < Orderbooks[expiry][j].Strike
+		})
 	}
 }
 
@@ -159,17 +223,18 @@ func aevoUpdateOrderbooks(res map[string]interface{}) error {
 		return fmt.Errorf("aevoUpdateOrderbooks: unable to convert field: response: %+v", res)
 	}
 
-	if len(bidsRaw) <= 0 && len(asksRaw) <= 0 { //if instrument has no bids/asks its useless and discarded
+	if len(bidsRaw) <= 0 || len(asksRaw) <= 0 { //if instrument has no bids/asks its discarded
+		// should be && or when there are multiple exchanges used and || when only one, fix
 		return errors.New("no bids and asks")
 	}
 
-	bids, bidsErr := unpackOrders(bidsRaw, "aevo")
-	asks, asksErr := unpackOrders(asksRaw, "aevo")
+	bids, bidsErr := unpackOrders(bidsRaw, strike, optionType, "aevo")
+	asks, asksErr := unpackOrders(asksRaw, strike, optionType, "aevo")
 	if bidsErr != nil && asksErr != nil {
 		return fmt.Errorf("unpackOrders error: \n%v\n%v", bidsErr, asksErr)
 	}
 
-	aevoUpdateOrderbook(expiry, strike, optionType, bids, asks)
+	aevoUpdateOrderbook(expiry, bids, asks)
 
 	return nil
 }
@@ -198,7 +263,7 @@ func aevoWssRead(ctx context.Context, c *websocket.Conn) { //add exit condition,
 
 	if strings.Contains(channel, "orderbook") {
 		aevoUpdateOrderbooks(res)
-		fmt.Printf("%+v\n\n", res)
+		// fmt.Printf("%+v\n\n", res)
 	}
 }
 

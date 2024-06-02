@@ -13,6 +13,7 @@ type Box struct {
 	Apy           float64
 }
 
+// somewhere must check that bids/asks for all 4 legs exist
 // func updateBoxes() {
 // 	for expiry, item := range Orderbooks{
 
