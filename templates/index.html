@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>options</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="" />
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script> 
+    <!-- should probably download htmx to use locally -->
+
+    <style>
+        table {
+            border: 1px solid rgb(0, 0, 0);
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            border: 1px solid rgb(0, 0, 0);
+            text-align: center;
+            padding: 4px;
+        }
+    </style>
+</head>
+<body>
+    <table id="boxTable">
+        <thead>
+            <tr>
+                <th scope="col" rowspan="2">Expiry</th>
+                <th scope="col" rowspan="2">Strike 1</th>
+                <th scope="col" rowspan="2">Strike 2</th>
+                <th scope="col" colspan="2">Short Call</th>
+                <th scope="col" colspan="2">Long Call</th>
+                <th scope="col" colspan="2">Short Put</th>
+                <th scope="col" colspan="2">Long Put</th>
+                <th scope="col" rowspan="2">Cost</th>
+                <th scope="col" rowspan="2">Payoff</th>
+                <th scope="col" rowspan="2">Max Size</th>
+                <th scope="col" rowspan="2">Profit</th>
+                <th scope="col" rowspan="2">%Profit</th>
+                <th scope="col" rowspan="2">APY</th>
+                
+            </tr>
+            <tr>
+                <th>Exchange</th>
+                <th>Price</th>
+                <th>Exchange</th>
+                <th>Price</th>
+                <th>Exchange</th>
+                <th>Price</th>
+                <th>Exchange</th>
+                <th>Price</th>
+            </tr>
+        </thead>
+        <tbody hx-get="/update-table" hx-trigger="every 1s" hx-swap="innerHTML"></tbody>
+    </table>
+</body>
+</html>

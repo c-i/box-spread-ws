@@ -263,6 +263,9 @@ func aevoWssRead(ctx context.Context, c *websocket.Conn) { //add exit condition,
 
 	if strings.Contains(channel, "orderbook") {
 		aevoUpdateOrderbooks(res)
+		updateBoxes()
+		fmt.Printf("%+v\n\n", len(Boxes))
+		// fmt.Printf("%+v\n\n", Boxes)
 		// fmt.Printf("%+v\n\n", res)
 	}
 }

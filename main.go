@@ -2,8 +2,14 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"html/template"
 	"log"
+	"net/http"
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"nhooyr.io/websocket"
 )
@@ -21,7 +27,7 @@ type Order struct {
 }
 
 type Orders struct {
-	CallBids map[string][]Order
+	CallBids map[string][]Order //exchange: []Order
 	CallAsks map[string][]Order
 	PutBids  map[string][]Order
 	PutAsks  map[string][]Order
@@ -35,7 +41,6 @@ type Exchanges struct {
 
 // expiry: strike: exchange: orderbook
 var Orderbooks = make(map[int64][]*Orders) //Orders sorted by strike
-var Boxes = make(map[int64]*Box)
 
 func unpackOrders(orders []interface{}, strike float64, optionType string, exchange string) ([]Order, error) {
 	//takes unmarshaled json arrays of bids/asks and returns []Order
@@ -94,6 +99,70 @@ func mainEventLoop(exchanges Exchanges, connections map[string]ConnData) {
 	}
 }
 
+func serveHome(w http.ResponseWriter, r *http.Request) {
+	tmpl := template.Must(template.ParseFiles("templates/index.html"))
+	tmpl.Execute(w, nil)
+}
+
+func boxTableHandler(w http.ResponseWriter, r *http.Request) {
+	boxTablesSlice := make([]*Box, len(Boxes)) //converting to slice to sort by apy
+	keySlice := make([]BoxKey, len(Boxes))
+	i := 0
+	for key, table := range Boxes {
+		keySlice[i] = key
+		boxTablesSlice[i] = table
+		i++
+	}
+	sort.Slice(boxTablesSlice, func(i, j int) bool { return boxTablesSlice[i].Apy > boxTablesSlice[j].Apy })
+
+	responseStr := ""
+	for i, value := range boxTablesSlice {
+		expiryUnix := time.Unix(keySlice[i].Expiry, 0)
+		expiry := strings.ToUpper(expiryUnix.Format("02Jan06 15:04:05"))
+
+		responseStr += fmt.Sprintf(
+			`<tr>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			<td>%s</td>
+			</tr>`,
+			expiry,
+			strconv.FormatFloat(keySlice[i].K1, 'f', 3, 64),
+			strconv.FormatFloat(keySlice[i].K2, 'f', 3, 64),
+			value.ShortCallBids[0].Exchange,
+			strconv.FormatFloat(value.ShortCallBids[0].Price, 'f', 3, 64),
+			value.LongCallAsks[0].Exchange,
+			strconv.FormatFloat(value.LongCallAsks[0].Price, 'f', 3, 64),
+			value.ShortPutBids[0].Exchange,
+			strconv.FormatFloat(value.ShortPutBids[0].Price, 'f', 3, 64),
+			value.LongPutAsks[0].Exchange,
+			strconv.FormatFloat(value.LongPutAsks[0].Price, 'f', 3, 64),
+			strconv.FormatFloat(value.Cost, 'f', 3, 64),
+			strconv.FormatFloat(value.Payoff, 'f', 3, 64),
+			strconv.FormatFloat(value.Amount, 'f', 3, 64),
+			strconv.FormatFloat(value.Profit, 'f', 3, 64),
+			strconv.FormatFloat(value.RelProfit*100, 'f', 3, 64),
+			strconv.FormatFloat(value.Apy, 'f', 3, 64),
+		)
+	}
+
+	fmt.Fprint(w, responseStr)
+}
+
 func main() {
 	exchanges := Exchanges{Aevo: true, Lyra: false}
 	connections := connInit(exchanges)
@@ -108,5 +177,10 @@ func main() {
 		defer connections["lyra"].Conn.CloseNow()
 	}
 
-	mainEventLoop(exchanges, connections)
+	go mainEventLoop(exchanges, connections)
+
+	http.HandleFunc("/", serveHome)
+	http.HandleFunc("/update-table", boxTableHandler)
+	fmt.Println("Server starting on http://localhost:8081...")
+	log.Fatal(http.ListenAndServe(":8081", nil))
 }
