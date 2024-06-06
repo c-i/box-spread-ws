@@ -42,6 +42,107 @@ type Exchanges struct {
 // expiry: strike: exchange: orderbook
 var Orderbooks = make(map[int64][]*Orders) //Orders sorted by strike
 
+func updateExistingOrderbook(order *Orders, bids []Order, asks []Order, exchange string, optionType string) {
+	_, callBidsExists := order.CallBids[exchange]
+	_, callAsksExists := order.CallAsks[exchange]
+	_, putBidsExists := order.PutBids[exchange]
+	_, putAsksExists := order.PutAsks[exchange]
+	if !callBidsExists || !callAsksExists || !putBidsExists || !putAsksExists {
+		order.CallBids = make(map[string][]Order)
+		order.CallAsks = make(map[string][]Order)
+		order.PutBids = make(map[string][]Order)
+		order.PutAsks = make(map[string][]Order)
+	}
+
+	if optionType == "C" {
+
+		order.CallBids[exchange] = bids
+		order.CallAsks[exchange] = asks
+
+		//should only need to sort when modified
+		// bids should be sorted descending, asks ascending
+		// sorting should be unnecessary if exchange sends data correctly, but I'll sort for now anyway
+		sort.Slice(order.CallBids[exchange], func(i, j int) bool {
+			return order.CallBids[exchange][i].Price > order.CallBids[exchange][j].Price
+		})
+		sort.Slice(order.CallAsks[exchange], func(i, j int) bool {
+			return order.CallAsks[exchange][i].Price < order.CallAsks[exchange][j].Price
+		})
+	}
+	if optionType == "P" {
+		order.PutBids[exchange] = bids
+		order.PutAsks[exchange] = asks
+
+		sort.Slice(order.PutBids[exchange], func(i, j int) bool {
+			return order.PutBids[exchange][i].Price > order.PutBids[exchange][j].Price
+		})
+		sort.Slice(order.PutAsks[exchange], func(i, j int) bool {
+			return order.PutAsks[exchange][i].Price < order.PutAsks[exchange][j].Price
+		})
+	}
+}
+
+func updateOrderbook(expiry int64, bids []Order, asks []Order) {
+	_, exists := Orderbooks[expiry]
+	// remember to sort by strike
+	if !exists { //might be unnecessary
+		Orderbooks[expiry] = make([]*Orders, 0)
+	}
+
+	var strike float64
+	var exchange string
+	var optionType string
+
+	if len(bids) > 0 {
+		strike = bids[0].Strike
+		exchange = bids[0].Exchange
+		optionType = bids[0].OptionType
+	} else {
+		strike = asks[0].Strike
+		exchange = asks[0].Exchange
+		optionType = asks[0].OptionType
+	}
+
+	strikeExists := false
+
+	for _, order := range Orderbooks[expiry] {
+		if order.Strike == strike {
+
+			updateExistingOrderbook(order, bids, asks, exchange, optionType)
+
+			// fmt.Printf("%+v\n\n", order)
+
+			strikeExists = true
+			break
+		}
+	}
+
+	if !strikeExists {
+
+		strikeOrder := Orders{Strike: strike}
+		if optionType == "C" {
+			strikeOrder.CallBids = make(map[string][]Order)
+			strikeOrder.CallAsks = make(map[string][]Order)
+
+			strikeOrder.CallBids[exchange] = bids
+			strikeOrder.CallAsks[exchange] = asks
+		}
+		if optionType == "P" {
+			strikeOrder.PutBids = make(map[string][]Order)
+			strikeOrder.PutAsks = make(map[string][]Order)
+
+			strikeOrder.PutBids[exchange] = bids
+			strikeOrder.PutAsks[exchange] = asks
+		}
+
+		Orderbooks[expiry] = append(Orderbooks[expiry], &strikeOrder)
+		// should only need to sort []Orders by Strike when new item is added
+		sort.Slice(Orderbooks[expiry], func(i, j int) bool {
+			return Orderbooks[expiry][i].Strike < Orderbooks[expiry][j].Strike
+		})
+	}
+}
+
 func unpackOrders(orders []interface{}, strike float64, optionType string, exchange string) ([]Order, error) {
 	//takes unmarshaled json arrays of bids/asks and returns []Order
 	//expects orders []interface{} to unpack into 2d array of [[price, amount, IV]...]
@@ -96,6 +197,10 @@ func mainEventLoop(exchanges Exchanges, connections map[string]ConnData) {
 		if exchanges.Aevo {
 			aevoWssRead(connections["aevo"].Ctx, connections["aevo"].Conn)
 		}
+		if exchanges.Lyra {
+			lyraWssRead(connections["lyra"].Ctx, connections["lyra"].Conn)
+		}
+		updateBoxes()
 	}
 }
 
@@ -105,10 +210,12 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func boxTableHandler(w http.ResponseWriter, r *http.Request) {
-	boxTablesSlice := make([]*Box, len(Boxes)) //converting to slice to sort by apy
-	keySlice := make([]BoxKey, len(Boxes))
+	BoxContainer.Mu.Lock()
+	defer BoxContainer.Mu.Unlock()
+	boxTablesSlice := make([]*Box, len(BoxContainer.Boxes)) //converting to slice to sort by apy
+	keySlice := make([]BoxKey, len(BoxContainer.Boxes))
 	i := 0
-	for key, table := range Boxes {
+	for key, table := range BoxContainer.Boxes {
 		keySlice[i] = key
 		boxTablesSlice[i] = table
 		i++

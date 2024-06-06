@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -114,38 +115,73 @@ func lyraWssReqOrderbook(instruments []string, ctx context.Context, c *websocket
 	}
 }
 
-// func lyraWssRead(ctx context.Context, c *websocket.Conn) {
-// 	var res map[string]interface{}
-// 	raw, err := wssRead(ctx, c)
-// 	if err != nil {
-// 		log.Printf("lyraWssRead: %v\n(response): %v\n\n", err, string(raw))
-// 		return
-// 	}
+func lyraUpdateOrderbooks(data map[string]interface{}) error {
+	lyraInstrument, ok := data["instrument_name"].(string)
+	bidsRaw, bidsOk := data["bids"].([]interface{})
+	asksRaw, asksOk := data["asks"].([]interface{})
+	if !ok || !(bidsOk || asksOk) {
+		return fmt.Errorf("lyraUpdateOrderbooks: unable to convert field: response: %+v", data)
+	}
 
-// 	err = json.Unmarshal(raw, &res)
-// 	if err != nil {
-// 		log.Printf("lyraWssRead: error unmarshaling orderbookRaw: %v\n(response): %v\n\n", err, string(raw))
-// 		return
-// 	}
+	if len(bidsRaw) <= 0 && len(asksRaw) <= 0 {
+		return fmt.Errorf("bidsRaw and asksRaw empty response")
+	}
 
-// 	params, ok := res["params"].(map[string]interface{})
-// 	if !ok {
-// 		log.Printf("lyraWssRead: unable to convert res['params'] to map[string]interface{}: (raw response): %v\n\n", string(raw))
-// 		return
-// 	}
+	components := strings.Split(lyraInstrument, "-")
+	strike, err := strconv.ParseFloat(components[2], 64)
+	if err != nil {
+		return fmt.Errorf("lyraUpdateOrderbooks: time.Parse error: %v", err)
+	}
+	expiryTs, err := time.Parse("20060102", components[1])
+	if err != nil {
+		return fmt.Errorf("lyraUpdateOrderbooks: time.Parse error: %v", err)
+	}
+	expiry := expiryTs.Unix()
+	optionType := components[3]
 
-// 	data, ok := params["data"].(map[string]interface{})
-// 	channel, chanOk := params["channel"].(string)
-// 	if !ok || !chanOk {
-// 		log.Printf("lyraWssRead: unable to convert params['data'] to map[string]interface{} or params['channel'] to string: (raw response): %v\n dataOk: %v\nchannelOk: %v\n\n", string(raw), ok, chanOk)
-// 		return
-// 	}
-// 	// fmt.Printf("%+v\n\n", res)
+	bids, bidsErr := unpackOrders(bidsRaw, strike, optionType, "lyra")
+	asks, asksErr := unpackOrders(asksRaw, strike, optionType, "lyra")
+	if bidsErr != nil && asksErr != nil {
+		return fmt.Errorf("unpackOrders error: \n%v\n%v", bidsErr, asksErr)
+	}
 
-// 	if strings.Contains(channel, "orderbook") {
-// 		lyraUpdateOrderbooks(data)
-// 	}
-// }
+	updateOrderbook(expiry, bids, asks)
+
+	return nil
+}
+
+func lyraWssRead(ctx context.Context, c *websocket.Conn) {
+	var res map[string]interface{}
+	raw, err := wssRead(ctx, c)
+	if err != nil {
+		log.Printf("lyraWssRead: %v\n(response): %v\n\n", err, string(raw))
+		return
+	}
+
+	err = json.Unmarshal(raw, &res)
+	if err != nil {
+		log.Printf("lyraWssRead: error unmarshaling orderbookRaw: %v\n(response): %v\n\n", err, string(raw))
+		return
+	}
+
+	params, ok := res["params"].(map[string]interface{})
+	if !ok {
+		log.Printf("lyraWssRead: unable to convert res['params'] to map[string]interface{}: (raw response): %v\n\n", string(raw))
+		return
+	}
+
+	data, ok := params["data"].(map[string]interface{})
+	channel, chanOk := params["channel"].(string)
+	if !ok || !chanOk {
+		log.Printf("lyraWssRead: unable to convert params['data'] to map[string]interface{} or params['channel'] to string: (raw response): %v\n dataOk: %v\nchannelOk: %v\n\n", string(raw), ok, chanOk)
+		return
+	}
+	// fmt.Printf("%+v\n\n", res)
+
+	if strings.Contains(channel, "orderbook") {
+		lyraUpdateOrderbooks(data)
+	}
+}
 
 func lyraWssReqLoop(ctx context.Context, c *websocket.Conn) {
 	for {

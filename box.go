@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"sync"
 	"time"
 )
 
@@ -25,20 +26,25 @@ type BoxKey struct {
 	K2     float64
 }
 
-var Boxes = make(map[BoxKey]*Box)
+type BoxesContainer struct {
+	Mu    sync.Mutex
+	Boxes map[BoxKey]*Box
+}
+
+var BoxContainer = BoxesContainer{Boxes: make(map[BoxKey]*Box)}
 
 func findApy(expiry int64, relProfit float64) float64 {
 	expiryTs := float64(expiry)
 	now := float64(time.Now().Unix())
 
-	apy := math.Pow(1.0+(relProfit), 365/math.Ceil((1+expiryTs-now)/86400)) * 100
+	apy := math.Pow(1.0+(relProfit), 365/math.Ceil((1+expiryTs-now)/86400))
 	// apy := 365/math.Ceil((1+timestamp-now)/86400) * relProfit
 
 	return apy
 }
 
 func updateBox(expiry int64, strikeOrders1 *Orders, strikeOrders2 *Orders) {
-	if len(strikeOrders2.CallBids) == 0 || len(strikeOrders1.CallAsks) == 0 || len(strikeOrders1.PutBids) == 0 || len(strikeOrders2.PutAsks) == 0 {
+	if len(strikeOrders2.CallBids) <= 0 || len(strikeOrders1.CallAsks) <= 0 || len(strikeOrders1.PutBids) <= 0 || len(strikeOrders2.PutAsks) <= 0 {
 		return
 	}
 
@@ -85,7 +91,7 @@ func updateBox(expiry int64, strikeOrders1 *Orders, strikeOrders2 *Orders) {
 		relProfit := profit / cost
 		apy := findApy(expiry, relProfit)
 
-		Boxes[key] = &Box{
+		BoxContainer.Boxes[key] = &Box{
 			ShortCallBids: bestCallBids,
 			LongCallAsks:  bestCallAsks,
 			ShortPutBids:  bestPutBids,
@@ -101,6 +107,9 @@ func updateBox(expiry int64, strikeOrders1 *Orders, strikeOrders2 *Orders) {
 }
 
 func updateBoxes() {
+	BoxContainer.Mu.Lock()
+	defer BoxContainer.Mu.Unlock()
+
 	for expiry, item := range Orderbooks {
 		if len(item) < 2 {
 			continue
